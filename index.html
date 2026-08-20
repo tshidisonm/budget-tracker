@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#F7F6F2" />
+<title>Budget Ledger</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<div id="app">
+
+  <header class="masthead">
+    <h1>Budget Ledger</h1>
+    <button id="settingsBtn" class="icon-btn" title="Settings" aria-label="Open settings">⚙</button>
+  </header>
+
+  <main>
+    <section class="month-bar">
+      <button id="prevMonth" class="icon-btn" aria-label="Previous month">←</button>
+      <div class="month-label">
+        <select id="monthSelect" aria-label="Select month"></select>
+      </div>
+      <button id="nextMonth" class="icon-btn" aria-label="Next month">→</button>
+      <button id="newMonthBtn" class="link-btn">+ New month</button>
+    </section>
+
+    <div class="layout">
+      <section class="ledger-card">
+        <table class="ledger" id="ledgerTable">
+          <thead>
+            <tr>
+              <th class="col-name">Category</th>
+              <th class="col-amount">Planned</th>
+              <th class="col-amount">Actual</th>
+              <th class="col-action"></th>
+            </tr>
+          </thead>
+          <tbody id="ledgerBody"></tbody>
+        </table>
+        <button id="addCategoryBtn" class="link-btn add-row">+ Add category</button>
+      </section>
+
+      <aside class="side">
+        <section class="income-card">
+          <label for="incomeInput">Monthly take-home income</label>
+          <div class="income-row">
+            <span class="currency">R</span>
+            <input type="number" id="incomeInput" inputmode="decimal" step="1" />
+          </div>
+        </section>
+
+        <section class="summary-card">
+          <div class="summary-row">
+            <span>Total planned</span>
+            <strong id="totalPlanned">R0</strong>
+          </div>
+          <div class="summary-row">
+            <span>Total actual</span>
+            <strong id="totalActual">R0</strong>
+          </div>
+          <div class="summary-row">
+            <span>Remaining</span>
+            <strong id="remaining">R0</strong>
+          </div>
+          <div class="summary-row highlight">
+            <span>Savings rate</span>
+            <strong id="savingsRate">0%</strong>
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <section class="backup-strip">
+      <div class="backup-status">
+        <span id="backupDot" class="dot dot-off"></span>
+        <span id="backupStatusText">Drive backup not connected</span>
+      </div>
+      <div class="backup-actions">
+        <button id="downloadCsvBtn" class="ghost-btn">Download CSV</button>
+        <label class="ghost-btn file-label">
+          Import CSV
+          <input type="file" id="importCsvInput" accept=".csv" hidden />
+        </label>
+        <button id="connectDriveBtn" class="primary-btn">Connect Google Drive</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Data stays on this device; optionally mirrored to a CSV in your Google Drive.</p>
+  </footer>
+</div>
+
+<div id="settingsModal" class="modal hidden">
+  <div class="modal-card">
+    <h2>Settings</h2>
+    <p class="modal-help">
+      To back up automatically to Google Drive, this app needs a Google OAuth Client ID
+      that you create yourself (free) in Google Cloud Console. See the included README for
+      the exact steps. Nothing is sent anywhere until you paste a Client ID here and click Connect.
+    </p>
+    <label for="clientIdInput">Google OAuth Client ID</label>
+    <input type="text" id="clientIdInput" placeholder="xxxxxxxxxxxx.apps.googleusercontent.com" />
+    <div class="modal-actions">
+      <button id="saveClientIdBtn" class="primary-btn">Save</button>
+      <button id="disconnectDriveBtn" class="ghost-btn">Disconnect Drive</button>
+      <button id="closeSettingsBtn" class="link-btn">Close</button>
+    </div>
+    <p class="modal-note" id="lastSyncNote"></p>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="sql-wasm.js"></script>
+<script src="db.js"></script>
+<script src="drive.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

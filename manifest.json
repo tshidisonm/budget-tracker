@@ -1,0 +1,25 @@
+{
+  "name": "Budget Ledger",
+  "short_name": "Budget",
+  "description": "Monthly budget tracker with local SQLite storage and Google Drive CSV backup",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#FAF6EE",
+  "theme_color": "#1B3A34",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
