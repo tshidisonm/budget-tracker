@@ -80,6 +80,18 @@ async function ensureFreshToken() {
   return requestToken({ silent: true });
 }
 
+// Attempts a no-prompt re-auth using Google's existing session. Resolves
+// false when the user must click Connect again (session expired/revoked).
+async function trySilentConnect() {
+  if (!isConfigured()) return false;
+  try {
+    await requestToken({ silent: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function findExistingFileId(token) {
   const cached = localStorage.getItem(LS_FILE_ID);
   if (cached) return cached;
@@ -93,6 +105,25 @@ async function findExistingFileId(token) {
     return data.files[0].id;
   }
   return null;
+}
+
+// Returns the remote CSV text, or null when no backup file exists yet.
+async function downloadCsv() {
+  const token = await ensureFreshToken();
+  const fileId = await findExistingFileId(token);
+  if (!fileId) return null;
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (res.status === 404) {
+    localStorage.removeItem(LS_FILE_ID);
+    return null;
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Drive download failed: ${res.status} ${text}`);
+  }
+  return res.text();
 }
 
 async function backupCsv(csvText) {
@@ -142,6 +173,8 @@ window.DriveBackup = {
   isConnected,
   lastSync,
   connect,
+  trySilentConnect,
+  downloadCsv,
   disconnect,
   backupCsv
 };

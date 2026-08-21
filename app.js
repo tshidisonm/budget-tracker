@@ -63,7 +63,7 @@ function renderCategories(categories) {
     const tr = document.createElement('tr');
     tr.dataset.id = cat.id;
     tr.innerHTML = `
-      <td class="col-name"><input class="cat-name-input" value="${escapeAttr(cat.name)}" /></td>
+      <td class="col-name"><input class="cat-name-input" value="${escapeHtml(cat.name)}" /></td>
       <td class="col-amount"><input class="cat-amount-input" type="number" inputmode="decimal" data-field="planned" value="${cat.planned}" /></td>
       <td class="col-amount"><input class="cat-amount-input" type="number" inputmode="decimal" data-field="actual" value="${cat.actual}" /></td>
       <td class="col-action"><button class="row-delete" aria-label="Delete category">✕</button></td>
@@ -72,8 +72,12 @@ function renderCategories(categories) {
   });
 }
 
-function escapeAttr(s) {
-  return String(s).replace(/"/g, '&quot;');
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 function recalcSummary(income, categories) {
@@ -121,6 +125,39 @@ async function runAutoBackup() {
     console.error(err);
     setBackupStatus('error', 'Drive sync failed — tap Connect to reconnect');
   }
+}
+
+// Full two-way sync: pull the remote CSV, merge it into the local database
+// (last-write-wins per row), re-render, then push the merged result back so
+// both sides converge. Safe to call repeatedly.
+async function syncWithDrive({ announce = false } = {}) {
+  if (!window.DriveBackup.isConfigured()) return;
+  try {
+    setBackupStatus('syncing', 'Syncing with Drive…');
+    let mergeMsg = '';
+    const remote = await window.DriveBackup.downloadCsv();
+    if (remote) {
+      const stats = await window.BudgetDB.mergeRemoteCsv(remote);
+      await loadMonth(state.monthId);
+      mergeMsg = formatMergeStats(stats);
+    }
+    const csv = window.BudgetDB.exportAllAsCsv();
+    await window.DriveBackup.backupCsv(csv);
+    setBackupStatus('on', 'Synced ' + new Date().toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }));
+    if (announce) showToast(mergeMsg || 'Up to date — nothing to merge');
+  } catch (err) {
+    console.error(err);
+    setBackupStatus('error', 'Drive sync failed — tap Connect to reconnect');
+    if (announce) showToast('Drive sync failed');
+  }
+}
+
+function formatMergeStats({ monthsAdded, categoriesAdded, cellsUpdated }) {
+  const parts = [];
+  if (monthsAdded) parts.push(`+${monthsAdded} month${monthsAdded === 1 ? '' : 's'}`);
+  if (categoriesAdded) parts.push(`+${categoriesAdded} categor${categoriesAdded === 1 ? 'y' : 'ies'}`);
+  if (cellsUpdated) parts.push(`${cellsUpdated} update${cellsUpdated === 1 ? '' : 's'}`);
+  return parts.length ? 'Merged from Drive: ' + parts.join(', ') : '';
 }
 
 function setBackupStatus(kind, text) {
@@ -241,8 +278,8 @@ function wireEvents() {
     }
     try {
       await window.DriveBackup.connect();
-      showToast('Connected to Google Drive');
-      runAutoBackup();
+      showToast('Signed in with Google');
+      await syncWithDrive({ announce: true });
     } catch (err) {
       console.error(err);
       showToast('Could not connect to Drive');
@@ -268,6 +305,16 @@ async function boot() {
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW registration failed', e));
+  }
+
+  // Background sync on load: silently re-auth, pull remote changes, merge,
+  // push back. Quietly skipped when the Google session has expired.
+  if (window.DriveBackup.isConfigured()) {
+    const reconnected = await window.DriveBackup.trySilentConnect();
+    if (reconnected) {
+      refreshBackupUiIdle();
+      await syncWithDrive();
+    }
   }
 }
 

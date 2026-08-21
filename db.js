@@ -60,13 +60,15 @@ async function initDb() {
   const saved = await idbGet();
   if (saved) {
     db = new SQL.Database(new Uint8Array(saved));
+    migrateSchema();
   } else {
     db = new SQL.Database();
     db.run(`
       CREATE TABLE months (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         year_month TEXT UNIQUE NOT NULL,
-        income REAL NOT NULL DEFAULT 0
+        income REAL NOT NULL DEFAULT 0,
+        updated INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE categories (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,6 +77,7 @@ async function initDb() {
         planned REAL NOT NULL DEFAULT 0,
         actual REAL NOT NULL DEFAULT 0,
         sort_order INTEGER NOT NULL DEFAULT 0,
+        updated INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (month_id) REFERENCES months(id) ON DELETE CASCADE
       );
     `);
@@ -84,13 +87,30 @@ async function initDb() {
   return db;
 }
 
+// Adds the `updated` timestamp columns to databases created before sync
+// existed. Existing rows get a current stamp so they win ties against
+// legacy CSVs that carry no timestamps at all.
+function migrateSchema() {
+  const monthCols = query('PRAGMA table_info(months)').map((r) => r.name);
+  if (!monthCols.includes('updated')) {
+    run('ALTER TABLE months ADD COLUMN updated INTEGER NOT NULL DEFAULT 0');
+    run('UPDATE months SET updated = ? WHERE updated = 0', [Date.now()]);
+  }
+  const catCols = query('PRAGMA table_info(categories)').map((r) => r.name);
+  if (!catCols.includes('updated')) {
+    run('ALTER TABLE categories ADD COLUMN updated INTEGER NOT NULL DEFAULT 0');
+    run('UPDATE categories SET updated = ? WHERE updated = 0', [Date.now()]);
+  }
+}
+
 function seedMonth(yearMonth, income, categories) {
-  db.run('INSERT INTO months (year_month, income) VALUES (?, ?)', [yearMonth, income]);
+  const ts = Date.now();
+  db.run('INSERT INTO months (year_month, income, updated) VALUES (?, ?, ?)', [yearMonth, income, ts]);
   const monthId = db.exec('SELECT last_insert_rowid()')[0].values[0][0];
   categories.forEach(([name, planned, actual], i) => {
     db.run(
-      'INSERT INTO categories (month_id, name, planned, actual, sort_order) VALUES (?, ?, ?, ?, ?)',
-      [monthId, name, planned, actual, i]
+      'INSERT INTO categories (month_id, name, planned, actual, sort_order, updated) VALUES (?, ?, ?, ?, ?, ?)',
+      [monthId, name, planned, actual, i, ts]
     );
   });
   return monthId;
@@ -137,19 +157,22 @@ function getMonthData(monthId) {
 }
 
 async function updateIncome(monthId, income) {
-  run('UPDATE months SET income = ? WHERE id = ?', [income, monthId]);
+  run('UPDATE months SET income = ?, updated = ? WHERE id = ?', [income, Date.now(), monthId]);
   await persist();
 }
 
 async function updateCategory(catId, field, value) {
-  run(`UPDATE categories SET ${field} = ? WHERE id = ?`, [value, catId]);
+  run(`UPDATE categories SET ${field} = ?, updated = ? WHERE id = ?`, [value, Date.now(), catId]);
   await persist();
 }
 
 async function addCategory(monthId, name) {
   const maxRow = query('SELECT COALESCE(MAX(sort_order), -1) AS m FROM categories WHERE month_id = ?', [monthId]);
   const nextOrder = (maxRow[0]?.m ?? -1) + 1;
-  run('INSERT INTO categories (month_id, name, planned, actual, sort_order) VALUES (?, ?, 0, 0, ?)', [monthId, name, nextOrder]);
+  run(
+    'INSERT INTO categories (month_id, name, planned, actual, sort_order, updated) VALUES (?, ?, 0, 0, ?, ?)',
+    [monthId, name, nextOrder, Date.now()]
+  );
   await persist();
 }
 
@@ -159,19 +182,19 @@ async function deleteCategory(catId) {
 }
 
 async function renameCategory(catId, name) {
-  run('UPDATE categories SET name = ? WHERE id = ?', [name, catId]);
+  run('UPDATE categories SET name = ?, updated = ? WHERE id = ?', [name, Date.now(), catId]);
   await persist();
 }
 
 function exportAllAsCsv() {
   const rows = query(`
-    SELECT m.year_month AS year_month, m.income AS income,
-           c.name AS category, c.planned AS planned, c.actual AS actual
+    SELECT m.year_month AS year_month, m.income AS income, m.updated AS m_updated,
+           c.name AS category, c.planned AS planned, c.actual AS actual, c.updated AS c_updated
     FROM months m
     JOIN categories c ON c.month_id = m.id
     ORDER BY m.year_month, c.sort_order, c.id
   `);
-  const header = ['year_month', 'income', 'category', 'planned', 'actual'];
+  const header = ['year_month', 'income', 'm_updated', 'category', 'planned', 'actual', 'c_updated'];
   const escape = (v) => {
     const s = String(v ?? '');
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -181,6 +204,81 @@ function exportAllAsCsv() {
     lines.push(header.map((h) => escape(r[h])).join(','));
   }
   return lines.join('\n');
+}
+
+// Merges a remote CSV into the local database without destroying local rows.
+// Rows are matched by (year_month, category name). Anything that exists only
+// on one side is kept; when both sides have a row, the side with the newer
+// `updated` timestamp wins (last-write-wins per row). CSVs from before
+// timestamps existed carry no m_updated/c_updated columns — those can only
+// contribute brand-new months/categories, never overwrite existing data.
+async function mergeRemoteCsv(text) {
+  const lines = text.trim().split('\n');
+  if (!lines.length || !lines[0].trim()) {
+    return { monthsAdded: 0, categoriesAdded: 0, cellsUpdated: 0 };
+  }
+  const header = lines[0].split(',').map((h) => h.trim());
+  const idx = (name) => header.indexOf(name);
+  const hasTimestamps = idx('m_updated') !== -1 && idx('c_updated') !== -1;
+  const stats = { monthsAdded: 0, categoriesAdded: 0, cellsUpdated: 0 };
+
+  const localMonths = new Map();
+  query('SELECT id, year_month, income, updated FROM months').forEach((m) => localMonths.set(m.year_month, m));
+  const ymById = new Map([...localMonths.values()].map((m) => [m.id, m.year_month]));
+  const localCats = new Map();
+  query('SELECT id, month_id, name, planned, actual, updated FROM categories').forEach((c) => {
+    localCats.set(ymById.get(c.month_id) + '\u0000' + c.name, c);
+  });
+
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const cells = splitCsvLine(lines[i]);
+    const yearMonth = cells[idx('year_month')];
+    const income = parseFloat(cells[idx('income')]) || 0;
+    const category = cells[idx('category')];
+    const planned = parseFloat(cells[idx('planned')]) || 0;
+    const actual = parseFloat(cells[idx('actual')]) || 0;
+    const mUpdated = hasTimestamps ? parseInt(cells[idx('m_updated')], 10) || 0 : 0;
+    const cUpdated = hasTimestamps ? parseInt(cells[idx('c_updated')], 10) || 0 : 0;
+
+    let month = localMonths.get(yearMonth);
+    if (!month) {
+      run('INSERT INTO months (year_month, income, updated) VALUES (?, ?, ?)', [yearMonth, income, mUpdated]);
+      const id = db.exec('SELECT last_insert_rowid()')[0].values[0][0];
+      month = { id, year_month: yearMonth, income, updated: mUpdated };
+      localMonths.set(yearMonth, month);
+      ymById.set(id, yearMonth);
+      stats.monthsAdded++;
+    } else if (mUpdated > (month.updated || 0)) {
+      run('UPDATE months SET income = ?, updated = ? WHERE id = ?', [income, mUpdated, month.id]);
+      month.income = income;
+      month.updated = mUpdated;
+      stats.cellsUpdated++;
+    }
+
+    const key = yearMonth + '\u0000' + category;
+    const cat = localCats.get(key);
+    if (!cat) {
+      const ord = query(
+        'SELECT COALESCE(MAX(sort_order), -1) AS m FROM categories WHERE month_id = ?',
+        [month.id]
+      )[0].m + 1;
+      run(
+        'INSERT INTO categories (month_id, name, planned, actual, sort_order, updated) VALUES (?, ?, ?, ?, ?, ?)',
+        [month.id, category, planned, actual, ord, cUpdated]
+      );
+      localCats.set(key, { id: null, month_id: month.id, name: category, planned, actual, updated: cUpdated });
+      stats.categoriesAdded++;
+    } else if (cUpdated > (cat.updated || 0)) {
+      run('UPDATE categories SET planned = ?, actual = ?, updated = ? WHERE id = ?', [planned, actual, cUpdated, cat.id]);
+      cat.planned = planned;
+      cat.actual = actual;
+      cat.updated = cUpdated;
+      stats.cellsUpdated++;
+    }
+  }
+  await persist();
+  return stats;
 }
 
 async function importCsv(text) {
@@ -253,5 +351,6 @@ window.BudgetDB = {
   deleteCategory,
   renameCategory,
   exportAllAsCsv,
-  importCsv
+  importCsv,
+  mergeRemoteCsv
 };

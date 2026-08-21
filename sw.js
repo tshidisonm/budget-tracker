@@ -1,7 +1,7 @@
 // sw.js — caches the app shell so the ledger works offline.
 // Network requests to Google (auth/backup) are always passed through live.
 
-const CACHE_NAME = 'budget-ledger-v1';
+const CACHE_NAME = 'budget-ledger-v2';
 const SHELL_FILES = [
   './',
   './index.html',
