@@ -1,17 +1,17 @@
 :root {
-  --bg: #F7F6F2;
+  --bg: #FAFAFA;
   --surface: #FFFFFF;
-  --line: #EBE8E1;
-  --line-strong: #DAD6CC;
-  --text: #20231F;
-  --text-soft: #7B7E77;
-  --accent: #23705B;
-  --accent-ink: #1B5C49;
-  --accent-soft: #E5F0EC;
-  --alert: #C04A31;
-  --alert-soft: #F6E6E1;
-  --radius: 16px;
-  --shadow: 0 1px 2px rgba(20, 30, 25, 0.04), 0 10px 30px rgba(20, 30, 25, 0.06);
+  --line: #E5E5E5;
+  --line-strong: #D4D4D4;
+  --text: #171717;
+  --text-soft: #737373;
+  --accent: #171717;
+  --accent-ink: #000000;
+  --accent-soft: #F0F0F0;
+  --alert: #404040;
+  --alert-soft: #E8E8E8;
+  --radius: 12px;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", "SFMono-Regular", "Roboto Mono", Menlo, monospace;
 }
@@ -295,9 +295,9 @@ input[type="number"] { -moz-appearance: textfield; }
   width: 8px; height: 8px; border-radius: 50%;
   display: inline-block;
 }
-.dot-off { background: #C9C2AC; }
-.dot-on { background: var(--accent); }
-.dot-error { background: var(--alert); }
+.dot-off { background: #D4D4D4; }
+.dot-on { background: var(--text); }
+.dot-error { background: #737373; }
 .backup-actions {
   display: flex;
   gap: 8px;
@@ -318,7 +318,7 @@ footer p {
 .modal {
   position: fixed;
   inset: 0;
-  background: rgba(20, 30, 25, 0.4);
+  background: rgba(23, 23, 23, 0.45);
   display: flex;
   align-items: center;
   justify-content: center;
